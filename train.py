@@ -2,94 +2,91 @@ import pandas as pd
 import numpy as np
 import torch
 import torch.nn as nn
+import matplotlib.pyplot as plt
 
-# ─── Model Definition ─────────────────────────────────────────────────────────
-
+# 1. Model Definition
 class HousingModel(nn.Module):
-    """Neural network for predicting housing prices from property features.
-    Architecture: Linear(5, 32) -> ReLU -> Linear(32, 1)
-    """
-
     def __init__(self):
-        """Define the model layers."""
         super().__init__()
-        # Implementation of the layers
-        self.layer1 = nn.Linear(5, 32)   # 5 input features → 32 hidden units
-        self.relu   = nn.ReLU()           # activation function
-        self.layer2 = nn.Linear(32, 1)    # 32 hidden → 1 output (price prediction)
+        self.layer1 = nn.Linear(5, 32)
+        self.relu   = nn.ReLU()
+        self.layer2 = nn.Linear(32, 1)
 
     def forward(self, x):
-        """Define the forward pass."""
-        x = self.layer1(x)
-        x = self.relu(x)
-        x = self.layer2(x)
-        return x
-
-
-# ─── Main Training Script ─────────────────────────────────────────────────────
+        return self.layer2(self.relu(self.layer1(x)))
 
 def main():
-    """Load data, train HousingModel, and save predictions."""
-
-    # ── 1. Load Data ──────────────────────────────────────────────────────────
+    # 2. Load Data
     df = pd.read_csv('data/housing.csv')
-    print(f"Data shape: {df.shape}")
+    X = df.drop('price_jod', axis=1)
+    y = df[['price_jod']]
 
-    # ── 2. Separate Features and Target ──────────────────────────────────────
-    feature_cols = ['area_sqm', 'bedrooms', 'floor', 'age_years', 'distance_to_center_km']
-    X = df[feature_cols]
-    y = df[['price_jod']]   # Keep shape (N, 1)
-
-    # ── 3. Standardize Features ───────────────────────────────────────────────
-    X_mean = X.mean()
-    X_std  = X.std()
+    # 3. Standardization
+    X_mean, X_std = X.mean(), X.std()
     X_scaled = (X - X_mean) / X_std
 
-    # ── 4. Convert to Tensors ─────────────────────────────────────────────────
+    # 4. Convert to Tensors
     X_tensor = torch.tensor(X_scaled.values, dtype=torch.float32)
     y_tensor = torch.tensor(y.values, dtype=torch.float32)
-    print(f"X_tensor shape: {X_tensor.shape}")
-    print(f"y_tensor shape: {y_tensor.shape}")
 
-    # ── 5. Instantiate Model, Loss, and Optimizer ─────────────────────────────
-    model     = HousingModel()
+    # 5. Train/Test Split (80/20) - Required by Challenge 1
+    torch.manual_seed(42)
+    indices = torch.randperm(len(X_tensor))
+    split = int(0.8 * len(X_tensor))
+    
+    X_train, X_test = X_tensor[indices[:split]], X_tensor[indices[split:]]
+    y_train, y_test = y_tensor[indices[:split]], y_tensor[indices[split:]]
+
+    # 6. Training Setup
+    model = HousingModel()
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    train_losses = []
 
-    # ── 6. Training Loop ──────────────────────────────────────────────────────
-    num_epochs = 100
-    for epoch in range(num_epochs):
-        # Forward pass
-        predictions = model(X_tensor)
+    # 7. Training Loop
+    for epoch in range(100):
+        model.train()
+        preds = model(X_train)
+        loss = criterion(preds, y_train)
         
-        # Compute loss
-        loss = criterion(predictions, y_tensor)
-        
-        # Training steps
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         
-        # Print progress every 10 epochs
+        train_losses.append(loss.item())
         if epoch % 10 == 0:
-            print(f"Epoch {epoch:3d}: Loss = {loss.item():.4f}")
+            print(f"Epoch {epoch}: Loss = {loss.item():.4f}")
 
-    # ── 7. Save Predictions ───────────────────────────────────────────────────
+    # 8. Metrics Calculation (Using NumPy as requested)
+    model.eval()
     with torch.no_grad():
-        final_predictions = model(X_tensor)
-        
-    # Convert to numpy and save
-    preds_np = final_predictions.numpy().flatten()
-    actuals_np = y_tensor.numpy().flatten()
-    
-    results_df = pd.DataFrame({
-        'actual': actuals_np,
-        'predicted': preds_np
-    })
-    
-    results_df.to_csv('predictions.csv', index=False)
-    print("Saved predictions.csv")
+        train_preds = model(X_train).numpy().flatten()
+        test_preds = model(X_test).numpy().flatten()
+        y_train_np = y_train.numpy().flatten()
+        y_test_np = y_test.numpy().flatten()
 
+        def get_metrics(actual, pred):
+            mae = np.mean(np.abs(actual - pred))
+            ss_res = np.sum((actual - pred)**2)
+            ss_tot = np.sum((actual - np.mean(actual))**2)
+            r2 = 1 - (ss_res / ss_tot)
+            return mae, r2
+
+        tr_mae, tr_r2 = get_metrics(y_train_np, train_preds)
+        te_mae, te_r2 = get_metrics(y_test_np, test_preds)
+
+        print(f"\nTrain MAE: {tr_mae:.2f}, R2: {tr_r2:.4f}")
+        print(f"Test MAE: {te_mae:.2f}, R2: {te_r2:.4f}")
+
+    # 9. Save Visualizations
+    plt.figure()
+    plt.plot(train_losses)
+    plt.savefig('loss_curve.png')
+    
+    plt.figure()
+    plt.scatter(y_test_np, test_preds)
+    plt.plot([y_test_np.min(), y_test_np.max()], [y_test_np.min(), y_test_np.max()], 'r--')
+    plt.savefig('predictions_plot.png')
 
 if __name__ == "__main__":
     main()
